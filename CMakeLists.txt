@@ -241,6 +241,8 @@ set(SRCS
     "src/game/trap.h"
     "src/game/ui.c"
     "src/game/ui.h"
+    "src/game/video_convert.c"
+    "src/game/video_convert.h"
     "src/game/walkmask.c"
     "src/game/walkmask.h"
     "src/game/wall.c"
@@ -284,6 +286,8 @@ set(SRCS
     "src/ui/logbook_ui.h"
     "src/ui/mainmenu_ui.c"
     "src/ui/mainmenu_ui.h"
+    "src/ui/video_convert_ui.c"
+    "src/ui/video_convert_ui.h"
     "src/ui/options_ui.c"
     "src/ui/options_ui.h"
     "src/ui/roller_ui.c"
@@ -398,6 +402,16 @@ if(APPLE)
         set(CPACK_DMG_DISABLE_APPLICATIONS_SYMLINK ON)
         set(CPACK_PACKAGE_FILE_NAME "Arcanum Community Edition")
     endif()
+
+    include(CPack)
+endif()
+
+if(WIN32)
+    install(TARGETS arcanum-ce DESTINATION .)
+
+    set(CPACK_GENERATOR "ZIP")
+    set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+    set(CPACK_PACKAGE_FILE_NAME "arcanum-ce")
 
     include(CPack)
 endif()

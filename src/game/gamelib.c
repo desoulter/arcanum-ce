@@ -22,6 +22,7 @@
 #include "game/gfade.h"
 #include "game/gmovie.h"
 #include "game/gsound.h"
+#include "game/video_convert.h"
 #include "game/highres_config.h"
 #include "game/hrp.h"
 #include "game/invensource.h"
@@ -178,6 +179,7 @@ static GameLibModule gamelib_modules[] = {
     { "Newspaper", newspaper_init, newspaper_reset, NULL, NULL, newspaper_exit, NULL, NULL, newspaper_save, newspaper_load, NULL },
     { "TownMap", NULL, townmap_reset, townmap_mod_load, townmap_mod_unload, NULL, NULL, NULL, NULL, NULL, NULL },
     { "GMovie", NULL, NULL, gmovie_mod_load, gmovie_mod_unload, NULL, NULL, NULL, NULL, NULL, NULL },
+    { "VideoConvert", video_convert_init, NULL, NULL, NULL, video_convert_exit, NULL, NULL, NULL, NULL, NULL },
     { "Brightness", brightness_init, NULL, NULL, NULL, brightness_exit, NULL, NULL, NULL, NULL, NULL },
     { "GFade", gfade_init, NULL, NULL, NULL, gfade_exit, NULL, NULL, NULL, NULL, gfade_resize },
     { "Anti-Teleport", antiteleport_init, NULL, antiteleport_mod_load, antiteleport_mod_unload, antiteleport_exit, NULL, NULL, NULL, NULL, NULL },
@@ -335,6 +337,17 @@ bool gamelib_init(GameInitInfo* init_info)
         settings_get_value(&settings, TRANSLUCENT_BLACK_UI_KEY) != 0,
         8,
         128);
+
+    // CE: Opt-in for vanilla "snap camera to PC on overlay open". Default
+    // off — opening Inventory / Logbook / Schematic / Written / Options
+    // (in-play) / Charedit no longer yanks the view back to the player.
+    settings_register(&settings, RECENTER_CAMERA_ON_OVERLAY_KEY, "0", NULL);
+
+    // CE: PC lens widget tracks the player even when the camera is panned.
+    // Defaults on — the lens is logically a "back to the player" button so
+    // it should always show the player. Set to "0" for vanilla behavior
+    // (lens copies whatever is at screen center).
+    settings_register(&settings, PC_LENS_FOLLOWS_PLAYER_KEY, "1", NULL);
 
     gamelib_mod_loaded = false;
     gamelib_load_data();
@@ -1707,6 +1720,20 @@ const char* gamelib_get_locale(void)
     }
 
     return "en";
+}
+
+// CE: Read the RECENTER_CAMERA_ON_OVERLAY_KEY setting. Wraps the int
+// settings value as a bool — the overlay screens use this to decide
+// whether to snap the camera back to the PC on open.
+bool gamelib_recenter_camera_on_overlay(void)
+{
+    return settings_get_value(&settings, RECENTER_CAMERA_ON_OVERLAY_KEY) != 0;
+}
+
+// CE: Read the PC_LENS_FOLLOWS_PLAYER_KEY setting.
+bool gamelib_pc_lens_follows_player(void)
+{
+    return settings_get_value(&settings, PC_LENS_FOLLOWS_PLAYER_KEY) != 0;
 }
 
 // 0x4046F0

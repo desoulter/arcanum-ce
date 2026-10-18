@@ -18,6 +18,7 @@
 #include "game/item_effect.h"
 #include "game/level.h"
 #include "game/light.h"
+#include "game/location.h"
 #include "game/magictech.h"
 #include "game/map.h"
 #include "game/mt_item.h"
@@ -4490,7 +4491,14 @@ void intgame_pc_lens_do(PcLensMode mode, PcLens* pc_lens)
         }
         break;
     case PC_LENS_MODE_PASSTHROUGH:
-        sub_551A10(player_get_local_pc_obj());
+        // CE: sub_551A10() snaps the iso viewport back to the PC so the
+        // lens always shows the player's surroundings. Gated on
+        // RECENTER_CAMERA_ON_OVERLAY_KEY — default off, the lens just
+        // shows whatever's currently centered on screen so the player
+        // can pan and still open overlays without losing their scroll.
+        if (gamelib_recenter_camera_on_overlay()) {
+            sub_551A10(player_get_local_pc_obj());
+        }
 
         intgame_pc_lens.window_handle = pc_lens->window_handle;
         intgame_pc_lens.art_id = pc_lens->art_id;
@@ -4632,19 +4640,45 @@ void intgame_pc_lens_redraw(void)
     TigArtBlitInfo blit_info;
     TigRect src_rect;
     TigRect dst_rect;
+    TigRect lens_src_rect;
 
     if (intgame_pc_lens_video_buffer != NULL) {
+        // CE: Default is to copy whatever is at screen center — vanilla
+        // behavior, correct when the camera is centered on the PC.
+        lens_src_rect = intgame_pc_lens_dst_rect;
+
+        // CE: PC_LENS_FOLLOWS_PLAYER_KEY: when the camera has been panned
+        // away from the PC (i.e. recenter-camera-on-overlay is off and the
+        // player scrolled before opening an overlay), shift the source rect
+        // so the lens widget still shows the PC. The PC's current screen
+        // position is (center - dx, center - dy) where (dx, dy) is the
+        // scroll vector needed to re-center on the PC. The lens dst rect is
+        // pre-centered on the screen, so subtracting (dx, dy) from its
+        // origin lands the source rect on the PC.
+        if (gamelib_pc_lens_follows_player()) {
+            int64_t pc_obj = player_get_local_pc_obj();
+            if (pc_obj != OBJ_HANDLE_NULL) {
+                int64_t pc_loc;
+                int64_t dx;
+                int64_t dy;
+                pc_loc = obj_field_int64_get(pc_obj, OBJ_F_LOCATION);
+                location_calc_dist_from_screen_center(pc_loc, &dx, &dy);
+                lens_src_rect.x = intgame_pc_lens_dst_rect.x - (int)dx;
+                lens_src_rect.y = intgame_pc_lens_dst_rect.y - (int)dy;
+            }
+        }
+
         tig_window_copy(intgame_pc_lens.window_handle,
             intgame_pc_lens.rect,
             dword_64C52C,
-            &intgame_pc_lens_dst_rect);
+            &lens_src_rect);
 
         src_rect.x = 0;
         src_rect.y = 0;
         src_rect.width = intgame_pc_lens.rect->width;
         src_rect.height = intgame_pc_lens.rect->height;
 
-        if (tig_window_copy_to_vbuffer(dword_64C52C, &intgame_pc_lens_dst_rect, intgame_pc_lens_video_buffer, &src_rect) == TIG_OK) {
+        if (tig_window_copy_to_vbuffer(dword_64C52C, &lens_src_rect, intgame_pc_lens_video_buffer, &src_rect) == TIG_OK) {
             dst_rect = src_rect;
             dst_rect.x = intgame_pc_lens.rect->x;
             dst_rect.y = intgame_pc_lens.rect->y;
@@ -4965,6 +4999,15 @@ void sub_551910(TigMessage* msg)
 IntgameMode intgame_mode_get(void)
 {
     return intgame_mode_stack[intgame_mode_stack_size];
+}
+
+// CE: Public wrapper around sub_551A10 for overlay screens that close on
+// a PC-lens click. The lens widget is a "back to the player" button, so
+// clicking it should always recenter the iso camera on the PC — even when
+// the recenter-camera-on-overlay opt-in is off.
+void intgame_recenter_on_pc(void)
+{
+    sub_551A10(player_get_local_pc_obj());
 }
 
 // 0x551A10
@@ -8407,6 +8450,104 @@ void intgame_big_window_unlock(void)
     tig_window_hide(intgame_big_window_handle);
 }
 
+bool intgame_big_window_screen_rect(TigRect* rect)
+{
+    TigWindowData wd;
+
+    if (intgame_big_window_handle == TIG_WINDOW_HANDLE_INVALID) {
+        return false;
+    }
+    if (tig_window_data(intgame_big_window_handle, &wd) != TIG_OK) {
+        return false;
+    }
+    *rect = wd.rect;
+    return true;
+}
+
+// Re-push the big overlay window to the top of its z-class so it sits above
+// any subsequently created MIDDLE-class siblings (e.g. the main-menu backdrop
+// for the charedit step of character creation).
+void intgame_big_window_promote(void)
+{
+    if (intgame_big_window_handle == TIG_WINDOW_HANDLE_INVALID) {
+        return;
+    }
+    tig_window_move_on_top(intgame_big_window_handle);
+}
+
+// Re-push both iso-interface HUD strips to the top of their z-class.
+// Used after the custom-UI backdrop window is created so the strips
+// (which were created earlier and are therefore older in MIDDLE class)
+// don't get covered by the backdrop. Lets the original mainmenu art's
+// chromakey knockouts reveal the strip content (rotwin / info bar)
+// underneath, the way upstream's z-compositing intended.
+void intgame_iso_strips_promote(void)
+{
+    int i;
+    for (i = 0; i < 2; i++) {
+        if (dword_64C4F8[i] != TIG_WINDOW_HANDLE_INVALID) {
+            tig_window_move_on_top(dword_64C4F8[i]);
+        }
+    }
+}
+
+// Fully hide both iso-interface HUD strips.  Unlike intgame_hide(), which
+// leaves the bottom strip visible (moved up to align with main-menu chrome
+// covers and reused as the menu's rotwin / info-bar band), this hides
+// both strips outright.  Used by chrome-less menus (Save / Load) where the
+// would-be band would otherwise float visibly below the panel as "HUD
+// showing through" the menu.
+void intgame_iso_strips_hide_full(void)
+{
+    int i;
+    if (!intgame_iso_interface_created) {
+        return;
+    }
+    for (i = 0; i < 2; i++) {
+        if (dword_64C4F8[i] != TIG_WINDOW_HANDLE_INVALID) {
+            tig_window_hide(dword_64C4F8[i]);
+        }
+    }
+}
+
+// Force the iso (game-world) window visible.  intgame_hide() hides the
+// iso window — so when a pause-menu chain (ESC → Save / Load) hands off
+// into a chrome-less menu, the world would otherwise stay hidden behind
+// the panel as a black flood.  Pair with intgame_iso_strips_hide_full()
+// to get a clean "panel over live game" composite.
+void intgame_iso_world_show(void)
+{
+    if (!intgame_iso_interface_created) {
+        return;
+    }
+    if (dword_64C52C != TIG_WINDOW_HANDLE_INVALID) {
+        tig_window_show(dword_64C52C);
+    }
+}
+
+// Re-apply the moved-and-shown state of intgame_hide() for the bottom iso
+// strip, so chrome-bearing menus (pause menu, etc.) get their band back
+// after a transition through a chrome-less menu hid both strips.  The top
+// strip stays hidden (matches intgame_hide()).
+void intgame_iso_strips_show_as_band(void)
+{
+    TigRect rect;
+    if (!intgame_iso_interface_created) {
+        return;
+    }
+    if (dword_64C4F8[0] != TIG_WINDOW_HANDLE_INVALID) {
+        tig_window_hide(dword_64C4F8[0]);
+    }
+    if (dword_64C4F8[1] != TIG_WINDOW_HANDLE_INVALID) {
+        rect = intgame_interface_window_frames[1];
+        hrp_apply(&rect, GRAVITY_CENTER_HORIZONTAL | GRAVITY_CENTER_VERTICAL);
+        tig_window_move(dword_64C4F8[1], rect.x, rect.y);
+        if (!intgame_is_compact_interface()) {
+            tig_window_show(dword_64C4F8[1]);
+        }
+    }
+}
+
 // 0x557370
 void sub_557370(int64_t source_obj, int64_t target_obj)
 {
@@ -8615,6 +8756,11 @@ bool intgame_create_iso_window(tig_window_handle_t* window_handle_ptr)
 bool intgame_is_compact_interface(void)
 {
     return intgame_compact_interface;
+}
+
+bool intgame_iso_interface_is_created(void)
+{
+    return intgame_iso_interface_created;
 }
 
 // 0x5578D0

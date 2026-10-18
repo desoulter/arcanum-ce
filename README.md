@@ -114,7 +114,41 @@ These ports are not currently intended for players. Touch controls are not yet i
 
 ## Building from source
 
-Check [`ci-build.yml`](.github/workflows/ci-build.yml) for details on how the project is compiled.
+Check [`ci-build.yml`](.github/workflows/ci-build.yml) for details on how the project is compiled. The build has no external video dependencies — video playback uses a vendored MJPEG-in-AVI decoder in `first_party/bink_compat/` and works on every supported target out of the box.
+
+## Video playback
+
+The cross-platform video backend plays `.avi` (MJPEG / PCM) files produced from your original `.bik` cutscenes. The conversion is a one-time step per install. Custom `.mp4`/`.mov`/`.mkv`/`.webm` replacement videos dropped under `data/`, `art/`, or `modules/` are also auto-detected and converted alongside the cutscenes.
+
+**In-game (recommended):** launch Arcanum CE with unconverted videos in your data tree and it prompts you on first launch. If `ffmpeg` is in your `PATH` the prompt offers a single **Convert** button that runs the conversion in the background with a live progress bar; otherwise it shows the platform-specific install instructions and a re-check button. Converted `.avi` files for the original cutscenes land in `<game>/data/videos/`; user replacement videos get their `.avi` written as a sibling of the source file so the existing override search still finds it.
+
+**Command line (fallback):**
+
+```
+# Install ffmpeg first:
+#   macOS:   brew install ffmpeg
+#   Linux:   sudo apt install ffmpeg
+#   Windows: https://ffmpeg.org/download.html
+python3 scripts/convert_videos.py                  # auto-detects ~/Applications/Arcanum etc.
+python3 scripts/convert_videos.py --game-dir /path/to/Arcanum
+```
+
+The script enumerates every `.bik` inside the game's DAT archives plus any loose video files under the install tree, and writes `.avi` outputs to `<game>/data/videos/`. Re-runs skip files whose `.avi` is already up to date.
+
+**Converting your own replacement videos**
+
+To convert an arbitrary file by hand the encoder settings are:
+
+```
+ffmpeg -i INPUT.mp4 -c:v mjpeg -q:v 4 -pix_fmt yuvj420p -c:a pcm_s16le -f avi OUTPUT.avi
+```
+
+Drop the result anywhere the game's override search probes: `<game>/art/ui/mainmenu_bg.avi` for a custom main-menu background, `<game>/data/videos/<basename>.avi` to replace a specific cutscene, etc. Append `_native` to the basename (e.g. `mainmenu_bg_native.avi`) to keep the original pixel size instead of scaling to fit.
+
+**Per-platform notes**
+
+- **Windows x86 with the original `binkw32.dll`** is unchanged — the native path keeps playing `.bik` files directly. The conversion step is only needed on Windows x64 / Linux / macOS / iOS / Android.
+- **iOS / Android:** subprocess spawning isn't viable from the application sandbox, so the in-game prompt asks you to run the conversion on a desktop first and copy the resulting `.avi` files to the device alongside the rest of your owned game data (via Files on iOS, Android File Transfer on Android).
 
 ## Configuration
 

@@ -232,9 +232,12 @@ jobs:
       - name: Build
         run: cmake --build --preset windows-${{ matrix.arch }}-debug
 
+      - name: Pack
+        run: cpack --config out/build/windows-${{ matrix.arch }}/CPackConfig.cmake -C Debug -B out/build/windows-${{ matrix.arch }}
+
       - name: Upload
         uses: actions/upload-artifact@v6
         with:
           name: arcanum-ce-windows-${{ matrix.arch }}
-          path:  out/build/windows-${{ matrix.arch }}/Debug/arcanum-ce.exe
+          path: out/build/windows-${{ matrix.arch }}/*.zip
           retention-days: 7
